@@ -39,3 +39,26 @@ def list_collections():
         return collections
     except Exception as e:
         return {"error": str(e)}
+
+
+# Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
+@app.get("/search-client")
+def search_client():
+    """
+    Searches for points in the 'client_001_memory' collection where metadata 'client_id' == 123.
+    """
+    try:
+        result = qdrant_client.scroll(
+            collection_name="client_001_memory",
+            scroll_filter={
+                "must": [
+                    {"key": "client_id", "match": {"value": 123}}
+                ]
+            },
+            limit=10
+        )
+        # result is a tuple: (list of points, next page offset)
+        points, _ = result
+        return {"points": points}
+    except Exception as e:
+        return {"error": str(e)}
