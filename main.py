@@ -32,7 +32,10 @@ def read_root():
 def list_collections():
     """
     Returns a list of all collections in the connected Qdrant cluster.
+    If there is an error, returns the error message for debugging.
     """
-    collections = qdrant_client.get_collections()
-    # The result is a dict with a 'collections' key
-    return collections
+    try:
+        collections = qdrant_client.get_collections()
+        return collections
+    except Exception as e:
+        return {"error": str(e)}
