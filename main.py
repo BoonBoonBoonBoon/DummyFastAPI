@@ -41,6 +41,28 @@ def list_collections():
         return {"error": str(e)}
 
 
+# Endpoint to create indexes for client_id and lead_id
+@app.post("/create-indexes")
+def create_indexes():
+    """
+    Creates indexes for 'client_id' (integer) and 'lead_id' (keyword) in the 'client_001_memory' collection.
+    """
+    try:
+        qdrant_client.create_payload_index(
+            collection_name="client_001_memory",
+            field_name="client_id",
+            field_schema="integer"
+        )
+        qdrant_client.create_payload_index(
+            collection_name="client_001_memory",
+            field_name="lead_id",
+            field_schema="keyword"
+        )
+        return {"status": "Indexes created for client_id and lead_id."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
 @app.get("/search-client")
 def search_client():
