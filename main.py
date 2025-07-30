@@ -84,3 +84,28 @@ def search_client():
         return {"points": points}
     except Exception as e:
         return {"error": str(e)}
+
+
+# Endpoint to search for a specific client_id and lead_id
+from fastapi import Query
+
+@app.get("/search-client-lead")
+def search_client_lead(client_id: int = Query(...), lead_id: str = Query(...)):
+    """
+    Searches for points in the 'client_001_memory' collection where metadata 'client_id' and 'lead_id' match the given values.
+    """
+    try:
+        result = qdrant_client.scroll(
+            collection_name="client_001_memory",
+            scroll_filter={
+                "must": [
+                    {"key": "client_id", "match": {"value": client_id}},
+                    {"key": "lead_id", "match": {"value": lead_id}}
+                ]
+            },
+            limit=10
+        )
+        points, _ = result
+        return {"points": points}
+    except Exception as e:
+        return {"error": str(e)}
