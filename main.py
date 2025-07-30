@@ -84,7 +84,8 @@ def create_indexes():
 def search_client():
     """
     Searches for points in the 'client_001_memory' collection where metadata 'client_id' == 123.
-    After fetching, combines the payloads, measures token count, and trims context for LLM use.
+    Uses the 'summary' field from each payload if present, otherwise falls back to 'text'.
+    Sorts by timestamp descending to prioritize recent emails.
     """
     try:
         result = qdrant_client.scroll(
@@ -94,19 +95,34 @@ def search_client():
                     {"key": "client_id", "match": {"value": 123}}
                 ]
             },
-            limit=10
+            limit=100  # fetch more to allow for trimming
         )
         points, _ = result
-        # Extract text fields from payloads (customize as needed)
-        payload_texts = []
-        for point in points:
+        # Sort points by timestamp descending (most recent first)
+        def get_timestamp(point):
             payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
-            # Combine all string values in the payload
-            text = " ".join(str(v) for v in payload.values() if isinstance(v, (str, int, float)))
-            payload_texts.append(text)
+            return payload.get('timestamp', '')
+        points_sorted = sorted(points, key=get_timestamp, reverse=True)
+        # Use summary if present, else text
+        payload_texts = []
+        for point in points_sorted:
+            payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
+            summary = payload.get('summary')
+            if summary:
+                payload_texts.append(str(summary))
+            elif 'text' in payload:
+                payload_texts.append(str(payload['text']))
         context, token_count = prepare_context_for_llm(payload_texts)
+        # Optionally, return only the points used in the context
+        used_points = points_sorted[:len(payload_texts)]
+        serializable_points = []
+        for point in used_points:
+            if hasattr(point, 'id') and hasattr(point, 'payload'):
+                serializable_points.append({"id": point.id, "payload": point.payload})
+            else:
+                serializable_points.append(point)
         return {
-            "points": points,
+            "points": serializable_points,
             "context": context,
             "token_count": token_count
         }
