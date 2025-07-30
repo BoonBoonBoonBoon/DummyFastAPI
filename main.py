@@ -82,11 +82,9 @@ def create_indexes():
         return {"error": str(e)}
 
 
-# Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
-@app.get("/search-client")
-
 from fastapi import Query
 
+# Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
 @app.get("/search-client")
 def search_client(
     limit: int = Query(10, ge=1, le=100),
@@ -161,10 +159,7 @@ def search_client(
         }
 
 
-# Endpoint to search for a specific client_id and lead_id
-from fastapi import Query
-
-@app.get("/search-client-lead")
+ # Endpoint to search for a specific client_id and lead_id
 @app.get("/search-client-lead")
 def search_client_lead(
     client_id: int = Query(...),
