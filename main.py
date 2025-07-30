@@ -1,8 +1,23 @@
+# Utility function to measure token size and trim/chunk context using tiktoken
+def prepare_context_for_llm(texts, model="gpt-4-turbo", max_tokens=8000):
+    """
+    Combine texts, measure token count, and trim/chunk to fit max_tokens.
+    Returns the combined context and the token count.
+    """
+    enc = tiktoken.encoding_for_model(model)
+    combined = "\n".join(texts)
+    tokens = enc.encode(combined)
+    if len(tokens) > max_tokens:
+        # Trim to max_tokens
+        tokens = tokens[:max_tokens]
+        combined = enc.decode(tokens)
+    return combined, len(tokens)
 from fastapi import FastAPI
 # Import Qdrant client
 
 import os
 from qdrant_client import QdrantClient
+import tiktoken
 from dotenv import load_dotenv
 
 # Load environment variables from .env if present (for local dev)
@@ -65,9 +80,11 @@ def create_indexes():
 
 # Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
 @app.get("/search-client")
+
 def search_client():
     """
     Searches for points in the 'client_001_memory' collection where metadata 'client_id' == 123.
+    After fetching, combines the payloads, measures token count, and trims context for LLM use.
     """
     try:
         result = qdrant_client.scroll(
@@ -79,9 +96,20 @@ def search_client():
             },
             limit=10
         )
-        # result is a tuple: (list of points, next page offset)
         points, _ = result
-        return {"points": points}
+        # Extract text fields from payloads (customize as needed)
+        payload_texts = []
+        for point in points:
+            payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
+            # Combine all string values in the payload
+            text = " ".join(str(v) for v in payload.values() if isinstance(v, (str, int, float)))
+            payload_texts.append(text)
+        context, token_count = prepare_context_for_llm(payload_texts)
+        return {
+            "points": points,
+            "context": context,
+            "token_count": token_count
+        }
     except Exception as e:
         return {"error": str(e)}
 
