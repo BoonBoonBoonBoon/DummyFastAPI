@@ -18,11 +18,15 @@ from fastapi import FastAPI
 import os
 from qdrant_client import QdrantClient
 import tiktoken
+import logging
 from dotenv import load_dotenv
 
 # Load environment variables from .env if present (for local dev)
 load_dotenv()
 
+
+# Set up basic logging
+logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
 # Connect to Qdrant cloud using your endpoint and API key
@@ -81,7 +85,16 @@ def create_indexes():
 # Endpoint to search for client 123 in 'client_001_memory' collection by metadata tag 'client_id'
 @app.get("/search-client")
 
-def search_client():
+from fastapi import Query
+
+@app.get("/search-client")
+def search_client(
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    max_tokens: int = Query(8000, ge=100, le=32000),
+    model: str = Query("gpt-4-turbo"),
+    include_fields: str = Query("summary,text", description="Comma-separated fields to include in context")
+):
     """
     Searches for points in the 'client_001_memory' collection where metadata 'client_id' == 123.
     Uses the 'summary' field from each payload if present, otherwise falls back to 'text'.
@@ -95,28 +108,35 @@ def search_client():
                     {"key": "client_id", "match": {"value": 123}}
                 ]
             },
-            limit=100  # fetch more to allow for trimming
+            limit=limit + offset
         )
         points, _ = result
+        if not points:
+            return {
+                "points": [],
+                "context": "",
+                "token_count": 0,
+                "message": "No results found."
+            }
         # Sort points by timestamp descending (most recent first)
         def get_timestamp(point):
             payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
             return payload.get('timestamp', '')
         points_sorted = sorted(points, key=get_timestamp, reverse=True)
-        # Use summary if present, else text
+        # Pagination
+        paged_points = points_sorted[offset:offset+limit]
+        # Field selection
+        fields = [f.strip() for f in include_fields.split(",") if f.strip()]
         payload_texts = []
-        for point in points_sorted:
+        for point in paged_points:
             payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
-            summary = payload.get('summary')
-            if summary:
-                payload_texts.append(str(summary))
-            elif 'text' in payload:
-                payload_texts.append(str(payload['text']))
-        context, token_count = prepare_context_for_llm(payload_texts)
-        # Optionally, return only the points used in the context
-        used_points = points_sorted[:len(payload_texts)]
+            for field in fields:
+                if field in payload:
+                    payload_texts.append(str(payload[field]))
+                    break
+        context, token_count = prepare_context_for_llm(payload_texts, model=model, max_tokens=max_tokens)
         serializable_points = []
-        for point in used_points:
+        for point in paged_points:
             if hasattr(point, 'id') and hasattr(point, 'payload'):
                 serializable_points.append({"id": point.id, "payload": point.payload})
             else:
@@ -124,19 +144,43 @@ def search_client():
         return {
             "points": serializable_points,
             "context": context,
-            "token_count": token_count
+            "token_count": token_count,
+            "limit": limit,
+            "offset": offset,
+            "fields": fields,
+            "model": model,
+            "max_tokens": max_tokens
         }
     except Exception as e:
-        return {"error": str(e)}
+        logging.error(f"/search-client error: {e}")
+        return {
+            "points": [],
+            "context": "",
+            "token_count": 0,
+            "error": str(e)
+        }
 
 
 # Endpoint to search for a specific client_id and lead_id
 from fastapi import Query
 
 @app.get("/search-client-lead")
-def search_client_lead(client_id: int = Query(...), lead_id: str = Query(...)):
+@app.get("/search-client-lead")
+def search_client_lead(
+    client_id: int = Query(...),
+    lead_id: str = Query(...),
+    limit: int = Query(10, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    max_tokens: int = Query(8000, ge=100, le=32000),
+    model: str = Query("gpt-4-turbo"),
+    include_fields: str = Query("summary,text", description="Comma-separated fields to include in context")
+):
     """
     Searches for points in the 'client_001_memory' collection where metadata 'client_id' and 'lead_id' match the given values.
+    Uses the 'summary' field from each payload if present, otherwise falls back to 'text'.
+    Sorts by timestamp descending to prioritize recent emails.
+    Returns points, context, and token count.
+    Supports pagination, field selection, and token/model parameters.
     """
     try:
         result = qdrant_client.scroll(
@@ -147,9 +191,54 @@ def search_client_lead(client_id: int = Query(...), lead_id: str = Query(...)):
                     {"key": "lead_id", "match": {"value": lead_id}}
                 ]
             },
-            limit=10
+            limit=limit + offset
         )
         points, _ = result
-        return {"points": points}
+        if not points:
+            return {
+                "points": [],
+                "context": "",
+                "token_count": 0,
+                "message": "No results found."
+            }
+        # Sort points by timestamp descending (most recent first)
+        def get_timestamp(point):
+            payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
+            return payload.get('timestamp', '')
+        points_sorted = sorted(points, key=get_timestamp, reverse=True)
+        # Pagination
+        paged_points = points_sorted[offset:offset+limit]
+        # Field selection
+        fields = [f.strip() for f in include_fields.split(",") if f.strip()]
+        payload_texts = []
+        for point in paged_points:
+            payload = point.payload if hasattr(point, 'payload') else point.get('payload', {})
+            for field in fields:
+                if field in payload:
+                    payload_texts.append(str(payload[field]))
+                    break
+        context, token_count = prepare_context_for_llm(payload_texts, model=model, max_tokens=max_tokens)
+        serializable_points = []
+        for point in paged_points:
+            if hasattr(point, 'id') and hasattr(point, 'payload'):
+                serializable_points.append({"id": point.id, "payload": point.payload})
+            else:
+                serializable_points.append(point)
+        return {
+            "points": serializable_points,
+            "context": context,
+            "token_count": token_count,
+            "limit": limit,
+            "offset": offset,
+            "fields": fields,
+            "model": model,
+            "max_tokens": max_tokens
+        }
     except Exception as e:
-        return {"error": str(e)}
+        logging.error(f"/search-client-lead error: {e}")
+        return {
+            "points": [],
+            "context": "",
+            "token_count": 0,
+            "error": str(e)
+        }
